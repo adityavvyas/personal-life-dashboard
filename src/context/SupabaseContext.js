@@ -1,19 +1,80 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 
 const SupabaseContext = createContext(null);
 
+// ─── PIN Session Constants ───────────────────────────────────────────────────
+const PIN_SESSION_KEY = 'pin_session';
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const IDLE_CHECK_INTERVAL_MS = 30 * 1000; // Check every 30 seconds
+
+// ─── localStorage helpers (safe for Safari private mode) ─────────────────────
+const safeGetPinSession = () => {
+  try {
+    const raw = localStorage.getItem(PIN_SESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const safeSetPinSession = (userId) => {
+  try {
+    localStorage.setItem(PIN_SESSION_KEY, JSON.stringify({
+      unlockedAt: Date.now(),
+      userId,
+    }));
+  } catch {
+    // localStorage unavailable — session won't persist across refresh
+  }
+};
+
+const safeClearPinSession = () => {
+  try {
+    localStorage.removeItem(PIN_SESSION_KEY);
+  } catch {
+    // Ignore
+  }
+};
+
+const safeRefreshActivity = () => {
+  try {
+    const raw = localStorage.getItem(PIN_SESSION_KEY);
+    if (!raw) return;
+    const session = JSON.parse(raw);
+    session.unlockedAt = Date.now();
+    localStorage.setItem(PIN_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // Ignore
+  }
+};
+
+const isPinSessionValid = (userId) => {
+  const session = safeGetPinSession();
+  if (!session) return false;
+  if (session.userId !== userId) return false;
+  if (Date.now() - session.unlockedAt > IDLE_TIMEOUT_MS) return false;
+  return true;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROVIDER
+// ═══════════════════════════════════════════════════════════════════════════════
 export const SupabaseProvider = ({ children }) => {
-  // 'loading', 'unauthenticated', 'needs_pin_setup', 'needs_pin', 'authenticated'
-  const [authState, setAuthState] = useState('loading'); 
+  // Auth states: 'loading' | 'unauthenticated' | 'needs_pin_setup' | 'needs_pin' | 'authenticated'
+  const [authState, setAuthState] = useState('loading');
   const [userProfile, setUserProfile] = useState(null);
   const router = useRouter();
   const pathname = usePathname();
+  const idleTimerRef = useRef(null);
+  const currentUserIdRef = useRef(null);
 
-  const checkSession = async () => {
+  // ─── Core session check ──────────────────────────────────────────────────
+  const checkSession = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
@@ -21,75 +82,202 @@ export const SupabaseProvider = ({ children }) => {
         return;
       }
 
-      // Verify the session is still valid on the server (handles deleted users)
+      // Verify session is valid on the server (catches deleted users)
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError || !user) {
         await supabase.auth.signOut();
         setAuthState('unauthenticated');
         return;
       }
-      
-      // Fetch profile (explicitly excluding pin_hash to avoid RLS permissions error)
+
+      currentUserIdRef.current = user.id;
+
+      // Fetch profile (exclude pin_hash — handled by RPCs)
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('id, user_id, username, name, failed_attempts, locked_until')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .single();
-        
+
       if (profile) {
         setUserProfile(profile);
       }
 
-      // Check if PIN is setup using the custom RPC
+      // Check if PIN is setup
       const { data: hasPin, error: rpcError } = await supabase.rpc('has_pin_setup');
-      
+
       if (rpcError) {
-        console.warn("has_pin_setup RPC failed (might need to run the updated SQL). Defaulting to checking if profile exists.", rpcError);
+        console.warn('has_pin_setup RPC failed:', rpcError);
       }
-      
-      // If we don't know for sure, we default to needing setup if there's no profile, else needs pin
+
       const pinIsSetup = hasPin === true;
 
-      if (pinIsSetup) {
-        // We know they have a PIN, and because this is a highly secure dashboard,
-        // we deliberately force them to enter it on every refresh or new tab.
-        setAuthState('needs_pin');
-      } else {
+      if (!pinIsSetup) {
         setAuthState('needs_pin_setup');
+        return;
+      }
+
+      // ── PhonePe-style: check localStorage for a valid PIN session ──
+      if (isPinSessionValid(user.id)) {
+        // PIN was entered recently and hasn't expired — skip PIN screen
+        setAuthState('authenticated');
+      } else {
+        // PIN exists but session expired or missing — require PIN entry
+        safeClearPinSession(); // Clean up any stale session
+        setAuthState('needs_pin');
       }
     } catch (error) {
-      console.error("Auth initialization error:", error);
+      console.error('Auth initialization error:', error);
       setAuthState('unauthenticated');
     }
-  };
+  }, []);
 
+  // ─── Idle timeout: lock after 15 min of inactivity ───────────────────────
+  const startIdleTimer = useCallback(() => {
+    // Clear any existing timer
+    if (idleTimerRef.current) clearInterval(idleTimerRef.current);
+
+    idleTimerRef.current = setInterval(() => {
+      const userId = currentUserIdRef.current;
+      if (!userId) return;
+
+      if (!isPinSessionValid(userId)) {
+        setAuthState('needs_pin');
+        safeClearPinSession();
+      }
+    }, IDLE_CHECK_INTERVAL_MS);
+  }, []);
+
+  const stopIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearInterval(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  // ─── Activity tracking: refresh idle timestamp on user interaction ───────
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+
+    const handleActivity = () => safeRefreshActivity();
+
+    // Throttle: update at most once per 10 seconds to avoid localStorage thrash
+    let lastUpdate = 0;
+    const throttledActivity = () => {
+      const now = Date.now();
+      if (now - lastUpdate > 10000) {
+        lastUpdate = now;
+        handleActivity();
+      }
+    };
+
+    window.addEventListener('click', throttledActivity, { passive: true });
+    window.addEventListener('keydown', throttledActivity, { passive: true });
+    window.addEventListener('scroll', throttledActivity, { passive: true });
+    window.addEventListener('touchstart', throttledActivity, { passive: true });
+
+    return () => {
+      window.removeEventListener('click', throttledActivity);
+      window.removeEventListener('keydown', throttledActivity);
+      window.removeEventListener('scroll', throttledActivity);
+      window.removeEventListener('touchstart', throttledActivity);
+    };
+  }, [authState]);
+
+  // ─── Page Visibility API: re-check timeout when tab becomes visible ──────
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const userId = currentUserIdRef.current;
+        if (userId && !isPinSessionValid(userId)) {
+          setAuthState('needs_pin');
+          safeClearPinSession();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [authState]);
+
+  // ─── Cross-tab sync: listen for localStorage changes from other tabs ─────
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key !== PIN_SESSION_KEY) return;
+
+      if (e.newValue === null) {
+        // Another tab cleared the session (logout)
+        setAuthState((prev) => {
+          if (prev === 'authenticated') return 'needs_pin';
+          return prev;
+        });
+      } else {
+        // Another tab set/refreshed the session (login)
+        try {
+          const session = JSON.parse(e.newValue);
+          const userId = currentUserIdRef.current;
+          if (userId && session.userId === userId) {
+            setAuthState((prev) => {
+              if (prev === 'needs_pin') return 'authenticated';
+              return prev;
+            });
+          }
+        } catch {
+          // Malformed data, ignore
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // ─── Initialization & auth listener ──────────────────────────────────────
   useEffect(() => {
     checkSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event) => {
       if (event === 'SIGNED_OUT') {
-        sessionStorage.removeItem('pin_verified');
+        safeClearPinSession();
+        stopIdleTimer();
         setAuthState('unauthenticated');
         setUserProfile(null);
+        currentUserIdRef.current = null;
       } else if (event === 'SIGNED_IN') {
         checkSession();
       }
     });
 
     return () => authListener.subscription.unsubscribe();
-  }, []);
+  }, [checkSession, stopIdleTimer]);
 
+  // ─── Start/stop idle timer based on auth state ───────────────────────────
   useEffect(() => {
-    // Route protection based on authState
+    if (authState === 'authenticated') {
+      startIdleTimer();
+    } else {
+      stopIdleTimer();
+    }
+
+    return () => stopIdleTimer();
+  }, [authState, startIdleTimer, stopIdleTimer]);
+
+  // ─── Route protection ────────────────────────────────────────────────────
+  useEffect(() => {
     if (authState === 'loading') return;
-    
-    // Only allow access to non-login pages if fully authenticated
-    if (authState !== 'authenticated' && pathname !== '/login') {
+
+    if (authState !== 'authenticated' && pathname !== '/login' && pathname !== '/confirm') {
       router.push('/login');
     } else if (authState === 'authenticated' && pathname === '/login') {
       router.push('/');
     }
   }, [authState, pathname, router]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTH ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════════
 
   const signUp = async (email, password, username, name) => {
     try {
@@ -134,6 +322,10 @@ export const SupabaseProvider = ({ children }) => {
     try {
       const { error } = await supabase.rpc('setup_pin', { new_pin: pin });
       if (error) throw error;
+
+      // PIN created — unlock this session
+      const userId = currentUserIdRef.current;
+      if (userId) safeSetPinSession(userId);
       setAuthState('authenticated');
       return { success: true };
     } catch (e) {
@@ -145,8 +337,11 @@ export const SupabaseProvider = ({ children }) => {
     try {
       const { data, error } = await supabase.rpc('verify_pin', { pin_attempt: pin });
       if (error) throw error;
-      
+
       if (data === true) {
+        // PIN correct — unlock this session and persist to localStorage
+        const userId = currentUserIdRef.current;
+        if (userId) safeSetPinSession(userId);
         setAuthState('authenticated');
         return { success: true };
       }
@@ -178,6 +373,8 @@ export const SupabaseProvider = ({ children }) => {
   };
 
   const logout = async () => {
+    safeClearPinSession();
+    stopIdleTimer();
     await supabase.auth.signOut();
   };
 

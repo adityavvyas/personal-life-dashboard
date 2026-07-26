@@ -1,13 +1,12 @@
 'use client';
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useCallback, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Receipt, AlertCircle, CheckCircle2, MoreVertical, Trash2, Home, Zap, Film, Wifi } from 'lucide-react';
 import CustomSelect from '@/components/CustomSelect';
 import CustomDatePicker from '@/components/CustomDatePicker';
-
-import { useEffect } from 'react';
 import { useSupabase } from '@/context/SupabaseContext';
 import { useLanguage } from '@/context/LanguageProvider';
+import { useToast } from '@/context/ToastProvider';
 
 export default function BillsPage() {
   const { supabase } = useSupabase();
@@ -15,15 +14,28 @@ export default function BillsPage() {
   const [bills, setBills] = useState([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newBill, setNewBill] = useState({ name: '', amount: '', due_date: '', frequency: 'monthly' });
+  const [accounts, setAccounts] = useState([]);
+  const [payModalBill, setPayModalBill] = useState(null);
+  const [selectedAccount, setSelectedAccount] = useState('');
+  const { addToast } = useToast();
+
+  const fetchAccounts = useCallback(async () => {
+    const { data } = await supabase.from('accounts').select('*').order('name');
+    if (data) {
+      setAccounts(data);
+      if (data.length > 0) setSelectedAccount(data[0].id);
+    }
+  }, [supabase]);
+
+  const fetchBills = useCallback(async () => {
+    const { data } = await supabase.from('bills').select('*').order('due_date', { ascending: true });
+    if (data) setBills(data);
+  }, [supabase]);
 
   useEffect(() => {
     fetchBills();
-  }, []);
-
-  const fetchBills = async () => {
-    const { data } = await supabase.from('bills').select('*').order('due_date', { ascending: true });
-    if (data) setBills(data);
-  };
+    fetchAccounts();
+  }, [fetchBills, fetchAccounts]);
 
   const handleAddBill = async () => {
     if (!newBill.name || !newBill.amount || !newBill.due_date) return;
@@ -39,9 +51,66 @@ export default function BillsPage() {
     fetchBills();
   };
 
-  const handleMarkPaid = async (id, isPaid) => {
-    await supabase.from('bills').update({ is_paid: !isPaid }).eq('id', id);
-    fetchBills();
+  const handleMarkPaidClick = (bill) => {
+    if (bill.is_paid) {
+      handleUnmarkPaid(bill.id);
+    } else {
+      setPayModalBill(bill);
+    }
+  };
+
+  const handleUnmarkPaid = async (id) => {
+    try {
+      await supabase.from('bills').update({ is_paid: false }).eq('id', id);
+      fetchBills();
+    } catch (err) {
+      addToast(t('bills.errorUnmark') || 'Failed to unmark bill', 'error');
+    }
+  };
+
+  const confirmPayBill = async () => {
+    if (!payModalBill || !selectedAccount) return;
+    try {
+      const bill = payModalBill;
+      
+      const { error: txError } = await supabase.from('transactions').insert([{
+        amount: -Math.abs(Number(bill.amount)),
+        category_id: bill.category_id || null,
+        date: new Date().toISOString(),
+        description: `Paid Bill: ${bill.name}`,
+        account_id: selectedAccount
+      }]);
+      if (txError) throw txError;
+
+      const account = accounts.find(a => a.id === selectedAccount);
+      if (account) {
+        const { error: accError } = await supabase.from('accounts')
+          .update({ balance: Number(account.balance) - Number(bill.amount) })
+          .eq('id', selectedAccount);
+        if (accError) throw accError;
+      }
+
+      let updates = { is_paid: true };
+      
+      if (bill.frequency && bill.frequency !== 'one-time') {
+        const nextDate = new Date(bill.due_date);
+        if (bill.frequency === 'monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+        else if (bill.frequency === 'yearly') nextDate.setFullYear(nextDate.getFullYear() + 1);
+        else if (bill.frequency === 'weekly') nextDate.setDate(nextDate.getDate() + 7);
+        
+        updates.next_due_date = nextDate.toISOString().split('T')[0];
+      }
+
+      const { error: billError } = await supabase.from('bills').update(updates).eq('id', bill.id);
+      if (billError) throw billError;
+
+      addToast(t('bills.paidSuccess') || 'Bill marked as paid successfully!', 'success');
+      setPayModalBill(null);
+      fetchBills();
+      fetchAccounts();
+    } catch (err) {
+      addToast(err.message || 'Error processing payment', 'error');
+    }
   };
 
   const handleDeleteBill = async (id) => {
@@ -189,7 +258,7 @@ export default function BillsPage() {
                   <div style={{ textAlign: 'right', fontWeight: 600, fontSize: '1rem' }}>
                     ₹{Number(bill.amount).toLocaleString('en-IN')}
                   </div>
-                  <motion.button onClick={() => handleMarkPaid(bill.id, bill.is_paid)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className={bill.is_paid ? "btn-secondary" : "btn-primary"} style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', height: 'auto' }}>
+                  <motion.button onClick={() => handleMarkPaidClick(bill)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className={bill.is_paid ? "btn-secondary" : "btn-primary"} style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', height: 'auto' }}>
                     {bill.is_paid ? (t('bills.unmark') || 'Unmark') : (t('bills.markPaid') || 'Mark Paid')}
                   </motion.button>
                   <button onClick={() => handleDeleteBill(bill.id)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.25rem', display: 'flex', alignItems: 'center' }}>
@@ -201,6 +270,38 @@ export default function BillsPage() {
           })}
         </motion.div>
       </div>
+
+      <AnimatePresence>
+        {payModalBill && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '90%', maxWidth: '400px', boxShadow: 'var(--shadow-lg)', border: 'var(--border-delicate)' }}
+            >
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>{t('bills.payTitle') || 'Pay Bill'}</h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                {t('bills.payDesc') || 'Select an account to pay from.'}
+              </p>
+              
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>{t('bills.account') || 'Account'}</label>
+                <CustomSelect 
+                  options={accounts.map(acc => ({ value: acc.id, label: `${acc.name} (₹${Number(acc.balance).toLocaleString('en-IN')})` }))}
+                  value={selectedAccount}
+                  onChange={setSelectedAccount}
+                />
+              </div>
+              
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                <button className="btn-secondary" onClick={() => setPayModalBill(null)}>{t('bills.cancel') || 'Cancel'}</button>
+                <button className="btn-primary" onClick={confirmPayBill}>{t('bills.confirm') || 'Confirm Payment'}</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

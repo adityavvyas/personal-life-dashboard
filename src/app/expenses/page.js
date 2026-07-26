@@ -33,10 +33,9 @@ export default function ExpensesPage() {
     }
 
     const { data: txs } = await supabase.from('transactions')
-      .select('*, categories(name, icon, color)')
-      .eq('type', 'expense')
+      .select('*, categories(name, type, icon, color)')
       .order('date', { ascending: false });
-    if (txs) setExpenses(txs);
+    if (txs) setExpenses(txs.filter(tx => tx.categories?.type === 'expense'));
   };
 
   const handleSubmit = async (e) => {
@@ -45,7 +44,6 @@ export default function ExpensesPage() {
     
     await supabase.from('transactions').insert([{
       amount: -Math.abs(parseFloat(amount)), // store expenses as negative
-      type: 'expense',
       category_id: category,
       date,
       description: note || 'New Expense'

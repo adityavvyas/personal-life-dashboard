@@ -34,9 +34,14 @@ export default function Dashboard() {
         const totalBalance = accounts?.reduce((sum, acc) => sum + (Number(acc.balance) || 0), 0) || 0;
         setBalance(totalBalance);
 
+        const nextWeek = new Date();
+        nextWeek.setDate(nextWeek.getDate() + 7);
+        const nextWeekStr = nextWeek.toISOString().split('T')[0];
+
         const { data: bills } = await supabase.from('bills')
           .select('*')
           .eq('is_paid', false)
+          .lte('due_date', nextWeekStr)
           .order('due_date', { ascending: true })
           .limit(5);
         setUpcomingBills(bills || []);
@@ -45,7 +50,7 @@ export default function Dashboard() {
         setSafeToSpend(totalBalance - upcomingBillsSum);
 
         const { data: transactions } = await supabase.from('transactions')
-          .select('*, categories(name, icon, color)')
+          .select('*, categories(name, type, icon, color)')
           .order('date', { ascending: false })
           .limit(5);
         setRecentTransactions(transactions || []);
@@ -53,18 +58,19 @@ export default function Dashboard() {
         const startOfMonth = new Date();
         startOfMonth.setDate(1);
         const { data: allExpensesData } = await supabase.from('transactions')
-          .select('amount, date')
-          .eq('type', 'expense');
+          .select('amount, date, categories(name, type, icon, color)');
           
         let currentMonthExpenses = 0;
         let allTimeExpenses = 0;
         
         if (allExpensesData) {
           allExpensesData.forEach(tx => {
-            const amt = Math.abs(Number(tx.amount) || 0);
-            allTimeExpenses += amt;
-            if (new Date(tx.date) >= startOfMonth) {
-              currentMonthExpenses += amt;
+            if (tx.categories?.type === 'expense') {
+              const amt = Math.abs(Number(tx.amount) || 0);
+              allTimeExpenses += amt;
+              if (new Date(tx.date) >= startOfMonth) {
+                currentMonthExpenses += amt;
+              }
             }
           });
         }
@@ -88,12 +94,11 @@ export default function Dashboard() {
         setDailyAllowance(allowance);
 
         const todayStr = today.toISOString().split('T')[0];
-        const { data: todayExp } = await supabase.from('transactions')
-          .select('amount')
-          .eq('type', 'expense')
+        const { data: todayExpData } = await supabase.from('transactions')
+          .select('amount, categories(name, type, icon, color)')
           .eq('date', todayStr);
           
-        const spentToday = (todayExp || []).reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+        const spentToday = (todayExpData || []).filter(tx => tx.categories?.type === 'expense').reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
         setDailySpent(spentToday);
       };
       
@@ -373,8 +378,8 @@ export default function Dashboard() {
                     <div className="list-item-subtitle">{tx.categories?.name} • {new Date(tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
                   </div>
                 </div>
-                <div className="list-item-right" style={{ color: tx.type === 'income' ? 'var(--accent-success)' : 'var(--text-primary)', fontWeight: tx.type === 'income' ? 600 : 400 }}>
-                  {tx.type === 'income' ? '+' : ''}₹{Math.abs(tx.amount).toLocaleString('en-IN')}
+                <div className="list-item-right" style={{ color: tx.categories?.type === 'income' ? 'var(--accent-success)' : 'var(--text-primary)', fontWeight: tx.categories?.type === 'income' ? 600 : 400 }}>
+                  {tx.categories?.type === 'income' ? '+' : ''}₹{Math.abs(tx.amount).toLocaleString('en-IN')}
                 </div>
               </motion.div>
             ))}

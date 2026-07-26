@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server';
 
-export async function GET() {
+export async function GET(request) {
+  const { searchParams } = new URL(request.url);
+  const city = (searchParams.get('city') || 'jaipur').toLowerCase();
+  
+  // Helper to capitalize city name for display
+  const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const displayCity = capitalize(city);
+
   try {
-    // Attempting to scrape live data from a reliable public source
-    const response = await fetch('https://www.goodreturns.in/petrol-price-in-jaipur.html', {
+    const url = `https://www.goodreturns.in/petrol-price-in-${city}.html`;
+    const response = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
       next: { revalidate: 3600 } // Cache for 1 hour
     });
@@ -27,22 +34,22 @@ export async function GET() {
     
     // Premium and blends are usually a fixed offset from regular
     return NextResponse.json({
-      location: "Jaipur",
+      location: displayCity,
       date: new Date().toISOString().split('T')[0],
       rates: {
         "Petrol (Regular)": petrolPrice,
-        "Petrol (E20)": petrolPrice, // E20 is typically priced identically to E10/Regular
+        "Petrol (E20)": petrolPrice,
         "Petrol (High Octane/XP95)": petrolPrice + 4.62,
         "Diesel (Regular)": dieselPrice,
         "Diesel (Premium/XtraGreen)": dieselPrice + 3.14,
-        "CNG": 85.00
+        "CNG": 85.00 // CNG is typically a different source/pattern, using a fixed static value
       }
     });
     
   } catch (error) {
     // Fallback if scrape fails
     return NextResponse.json({
-      location: "Jaipur",
+      location: displayCity,
       date: new Date().toISOString().split('T')[0],
       isFallback: true,
       rates: {

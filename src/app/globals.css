@@ -174,15 +174,18 @@ a {
   transition: opacity var(--transition-fast);
 }
 
-a:hover {
-  opacity: 0.7;
+@media (hover: hover) and (pointer: fine) {
+  a:hover {
+    opacity: 0.7;
+  }
 }
 
-button {
+button, [role='button'] {
   cursor: pointer;
   font-family: inherit;
   border: none;
   background: none;
+  touch-action: manipulation;
 }
 
 /* Hide number input spinners */
@@ -282,9 +285,11 @@ input:focus, select:focus, textarea:focus {
   gap: 0.5rem;
 }
 
-.btn-primary:hover {
-  background: var(--accent-primary-hover);
-  border-color: var(--accent-primary-hover);
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover {
+    background: var(--accent-primary-hover);
+    border-color: var(--accent-primary-hover);
+  }
 }
 
 .btn-primary:active {
@@ -302,8 +307,10 @@ input:focus, select:focus, textarea:focus {
   box-shadow: var(--shadow-sm);
 }
 
-.btn-secondary:hover {
-  background: var(--bg-color);
+@media (hover: hover) and (pointer: fine) {
+  .btn-secondary:hover {
+    background: var(--bg-color);
+  }
 }
 
 /* Duplicate scrollbar block removed — single source of truth above */
@@ -379,8 +386,10 @@ input:focus, select:focus, textarea:focus {
   position: relative;
   transition: all var(--transition-smooth);
 }
-.stat-card:hover {
-  box-shadow: var(--shadow-soft);
+@media (hover: hover) and (pointer: fine) {
+  .stat-card:hover {
+    box-shadow: var(--shadow-soft);
+  }
 }
 .stat-card-header {
   display: flex;
@@ -446,8 +455,10 @@ input:focus, select:focus, textarea:focus {
   border-bottom-left-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-lg);
 }
-.list-item:hover {
-  background: var(--bg-color);
+@media (hover: hover) and (pointer: fine) {
+  .list-item:hover {
+    background: var(--bg-color);
+  }
 }
 .list-item-left {
   display: flex;
@@ -547,10 +558,6 @@ input:focus, select:focus, textarea:focus {
   overflow: hidden;
   white-space: nowrap;
 }
-.nav-desktop:hover {
-  width: 15rem;
-  box-shadow: var(--shadow-xl);
-}
 @media (min-width: 768px) {
   .nav-desktop {
     display: flex;
@@ -580,9 +587,6 @@ input:focus, select:focus, textarea:focus {
   opacity: 0;
   transition: opacity 0.2s ease;
 }
-.nav-desktop:hover .nav-desktop-group-title {
-  opacity: 1;
-}
 .nav-desktop-item {
   display: flex;
   align-items: center;
@@ -597,13 +601,6 @@ input:focus, select:focus, textarea:focus {
 .nav-desktop-label {
   opacity: 0;
   transition: opacity 0.2s ease;
-}
-.nav-desktop:hover .nav-desktop-label {
-  opacity: 1;
-}
-.nav-desktop-item:hover {
-  color: var(--text-primary);
-  background: var(--bg-color);
 }
 .nav-desktop-item.active {
   background: var(--bg-color);
@@ -622,29 +619,45 @@ input:focus, select:focus, textarea:focus {
   position: relative;
 }
 
-/* Tooltip visible only when sidebar is collapsed */
-.nav-desktop:not(:hover) .nav-desktop-item .nav-icon-wrap::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: calc(100% + 14px);
-  top: 50%;
-  transform: translateY(-50%);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-size: 0.8rem;
-  font-weight: 500;
-  padding: 0.35rem 0.65rem;
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-  box-shadow: var(--shadow-lg);
-  border: 1px solid var(--dropdown-border);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  z-index: 200;
-}
-.nav-desktop:not(:hover) .nav-desktop-item:hover .nav-icon-wrap::after {
-  opacity: 1;
+@media (hover: hover) and (pointer: fine) {
+  .nav-desktop:hover {
+    width: 15rem;
+    box-shadow: var(--shadow-xl);
+  }
+  .nav-desktop:hover .nav-desktop-group-title {
+    opacity: 1;
+  }
+  .nav-desktop:hover .nav-desktop-label {
+    opacity: 1;
+  }
+  .nav-desktop-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-color);
+  }
+  /* Tooltip visible only when sidebar is collapsed */
+  .nav-desktop:not(:hover) .nav-desktop-item .nav-icon-wrap::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: calc(100% + 14px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 0.35rem 0.65rem;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--dropdown-border);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+    z-index: 200;
+  }
+  .nav-desktop:not(:hover) .nav-desktop-item:hover .nav-icon-wrap::after {
+    opacity: 1;
+  }
 }
 
 /* Ghost Data Tables (Minimalist) */
@@ -678,8 +691,10 @@ input:focus, select:focus, textarea:focus {
 .data-table tr:last-child td {
   border-bottom: none;
 }
-.data-table tr:hover td {
-  background: #fcfcfd;
+@media (hover: hover) and (pointer: fine) {
+  .data-table tr:hover td {
+    background: var(--bg-color);
+  }
 }
 
 /* Minimal Status Pills */
@@ -775,18 +790,20 @@ input:focus, select:focus, textarea:focus {
   transition: all 0.2s ease;
 }
 
-.dropdown-item:hover {
-  background: var(--bg-color);
-  transform: translateX(2px);
-}
-
 .dropdown-item.danger {
   color: var(--accent-danger);
 }
 
-.dropdown-item.danger:hover {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--accent-danger);
+@media (hover: hover) and (pointer: fine) {
+  .dropdown-item:hover {
+    background: var(--bg-color);
+    transform: translateX(2px);
+  }
+
+  .dropdown-item.danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--accent-danger);
+  }
 }
 
 .login-panel {
@@ -865,8 +882,10 @@ input:focus, select:focus, textarea:focus {
   justify-content: center;
 }
 
-.numpad-btn:hover {
-  background: rgba(0,0,0,0.04);
+@media (hover: hover) and (pointer: fine) {
+  .numpad-btn:hover {
+    background: rgba(0,0,0,0.04);
+  }
 }
 
 .numpad-btn:active {
@@ -926,8 +945,10 @@ input:focus, select:focus, textarea:focus {
   transition: transform 0.5s ease;
 }
 
-.mockup-panel:hover {
-  transform: perspective(1000px) rotateY(0deg) rotateX(0deg);
+@media (hover: hover) and (pointer: fine) {
+  .mockup-panel:hover {
+    transform: perspective(1000px) rotateY(0deg) rotateX(0deg);
+  }
 }
 
 .mockup-header {
@@ -1098,4 +1119,12 @@ input:checked + .switch-slider:before {
   background-repeat: no-repeat, repeat;
   background-position: right .5em top 50%, 0 0;
   background-size: .65em auto, 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
